@@ -1,0 +1,11 @@
+{
+  "name": "giveaway-wheel",
+  "version": "1.0.0",
+  "description": "Giveaway Wheel",
+  "scripts": {
+    "start": "serve . -p $PORT"
+  },
+  "dependencies": {
+    "serve": "^14.2.0"
+  }
+}

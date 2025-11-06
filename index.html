@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Joker's Giveaway Wheel - FINAL</title>
+    
+    <!-- Google API Client Library for OAuth -->
+    <script src="https://apis.google.com/js/api.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Comic+Neue:wght@700&display=swap');
         
@@ -415,9 +420,39 @@
             <details style="margin-bottom: 15px;">
                 <summary style="font-size: 0.85em;">Google Sheets</summary>
                 <div class="controls" style="margin-top: 10px;">
+                    <!-- OAuth Option (Recommended) -->
+                    <div id="oauthSection">
+                        <div id="notConnected" style="margin-bottom: 15px;">
+                            <p style="margin-bottom: 10px; font-size: 0.85em;">Connect with OAuth (fixes flickering!):</p>
+                            <button id="authorizeButton" class="btn-google" style="width: 100%; margin-bottom: 10px; font-size: 0.8em;" onclick="handleAuthClick()">
+                                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" style="width: 16px; height: 16px;">
+                                Sign in with Google
+                            </button>
+                        </div>
+                        <div id="connected" style="display: none;">
+                            <div class="control-group">
+                                <label style="font-size: 0.8em;">Spreadsheet ID:</label>
+                                <input type="text" id="spreadsheetId" placeholder="Paste ID here" style="font-size: 0.8em;">
+                                <small style="display: block; margin-top: 3px; opacity: 0.7; font-size: 0.7em;">
+                                    From URL: /d/<strong>ID_HERE</strong>/edit
+                                </small>
+                            </div>
+                            <div class="control-group">
+                                <label style="font-size: 0.8em;">Range:</label>
+                                <input type="text" id="sheetRange" value="Sheet1!A:A" style="font-size: 0.8em;">
+                            </div>
+                            <div class="button-group">
+                                <button onclick="connectSheet()" class="btn-primary" style="font-size: 0.8em;">Connect</button>
+                                <button onclick="signOut()" class="btn-danger" style="font-size: 0.8em;">Sign Out</button>
+                            </div>
+                        </div>
+                        <hr style="margin: 15px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.2);">
+                    </div>
+                    
+                    <!-- CSV Option (Backup/Legacy) -->
                     <div class="control-group">
-                        <label for="csvUrl">CSV URL:</label>
-                        <input type="text" id="csvUrl" value="https://docs.google.com/spreadsheets/d/e/2PACX-1vSBIRgxCxl7jTQgd8eejwfzUkLYgzz-5ulJbcWfr8GqDQN5ng2U7OvdwD_NOzBoq1_vlnMOdJL2THYE/pub?gid=0&single=true&output=csv">
+                        <label for="csvUrl" style="font-size: 0.8em;">CSV URL (legacy):</label>
+                        <input type="text" id="csvUrl" value="https://docs.google.com/spreadsheets/d/e/2PACX-1vSBIRgxCxl7jTQgd8eejwfzUkLYgzz-5ulJbcWfr8GqDQN5ng2U7OvdwD_NOzBoq1_vlnMOdJL2THYE/pub?gid=0&single=true&output=csv" style="font-size: 0.8em;">
                     </div>
                 </div>
             </details>
@@ -484,6 +519,138 @@
     </div>
 
     <script>
+        // ============================================
+        // GOOGLE OAUTH CONFIGURATION
+        // ============================================
+        // TODO: Replace with your OAuth Client ID from Google Cloud Console
+        const CLIENT_ID = 'YOUR_CLIENT_ID_HERE.apps.googleusercontent.com';
+        const API_KEY = ''; // Optional
+        const SCOPES = 'https://www.googleapis.com/auth/spreadsheets.readonly';
+        
+        let tokenClient;
+        let gapiInited = false;
+        let gisInited = false;
+        let accessToken = null;
+        let currentSpreadsheetId = null;
+        let currentSheetRange = null;
+        let useOAuth = false; // Flag to determine if using OAuth or CSV
+        
+        // Initialize Google API
+        function gapiLoaded() {
+            gapi.load('client', initializeGapiClient);
+        }
+        
+        async function initializeGapiClient() {
+            await gapi.client.init({
+                apiKey: API_KEY,
+                discoveryDocs: ['https://sheets.googleapis.com/$discovery/rest?version=v4'],
+            });
+            gapiInited = true;
+        }
+        
+        function gisLoaded() {
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: CLIENT_ID,
+                scope: SCOPES,
+                callback: '',
+            });
+            gisInited = true;
+        }
+        
+        function handleAuthClick() {
+            tokenClient.callback = async (resp) => {
+                if (resp.error !== undefined) {
+                    alert('Sign-in failed: ' + resp.error);
+                    return;
+                }
+                accessToken = resp.access_token;
+                document.getElementById('notConnected').style.display = 'none';
+                document.getElementById('connected').style.display = 'block';
+                updateStatus('✅ Signed in! Enter Spreadsheet ID');
+            };
+            
+            if (accessToken === null) {
+                tokenClient.requestAccessToken({prompt: 'consent'});
+            } else {
+                tokenClient.requestAccessToken({prompt: ''});
+            }
+        }
+        
+        function signOut() {
+            if (accessToken) {
+                google.accounts.oauth2.revoke(accessToken);
+                accessToken = null;
+            }
+            stopAutoRefresh();
+            hideSyncIndicator();
+            document.getElementById('notConnected').style.display = 'block';
+            document.getElementById('connected').style.display = 'none';
+            currentSpreadsheetId = null;
+            currentSheetRange = null;
+            useOAuth = false;
+            updateStatus('Signed out');
+        }
+        
+        async function connectSheet() {
+            const spreadsheetId = document.getElementById('spreadsheetId').value.trim();
+            const sheetRange = document.getElementById('sheetRange').value.trim();
+            
+            if (!spreadsheetId || !sheetRange) {
+                alert('Enter Spreadsheet ID and Range');
+                return;
+            }
+            
+            currentSpreadsheetId = spreadsheetId;
+            currentSheetRange = sheetRange;
+            useOAuth = true;
+            
+            try {
+                const data = await fetchSheetData();
+                if (data.length === 0) {
+                    alert('Sheet is empty or range is incorrect');
+                    return;
+                }
+                
+                participants = data;
+                eliminatedParticipants = [];
+                updateParticipantsList();
+                drawWheel();
+                enableButtons();
+                startIdleRotation();
+                startAutoRefresh();
+                showSyncIndicator();
+                updateStatus(`✅ Connected! ${data.length} participants loaded`);
+            } catch (error) {
+                alert('Connection failed: ' + error.message);
+            }
+        }
+        
+        async function fetchSheetData() {
+            if (!accessToken || !currentSpreadsheetId || !currentSheetRange) {
+                throw new Error('Not connected');
+            }
+            
+            const response = await gapi.client.sheets.spreadsheets.values.get({
+                spreadsheetId: currentSpreadsheetId,
+                range: currentSheetRange,
+            });
+            
+            const rows = response.result.values;
+            if (!rows || rows.length === 0) return [];
+            
+            const names = rows
+                .slice(1)
+                .map(row => row[0])
+                .filter(name => name && name.trim().length > 0)
+                .map(name => name.trim());
+            
+            return names;
+        }
+        
+        // ============================================
+        // ORIGINAL WHEEL CODE
+        // ============================================
+        
         let participants = [];
         let eliminatedParticipants = [];
         let isSpinning = false;
@@ -969,6 +1136,54 @@
         }
         
         async function loadFromSheetSilently() {
+            // Use OAuth if enabled, otherwise fall back to CSV
+            if (useOAuth && accessToken && currentSpreadsheetId && currentSheetRange) {
+                try {
+                    const namesFromSheet = await fetchSheetData();
+                    
+                    if (namesFromSheet.length === 0) {
+                        if (participants.length > 0) {
+                            participants = [];
+                            updateParticipantsList();
+                            drawWheel();
+                            updateStatus('Sheet cleared - Watching...');
+                        }
+                        return;
+                    }
+                    
+                    const currentSet = new Set(participants);
+                    const newSet = new Set(namesFromSheet);
+                    
+                    const added = namesFromSheet.filter(name => !currentSet.has(name));
+                    const removed = participants.filter(name => !newSet.has(name));
+                    
+                    if (added.length > 0 || removed.length > 0) {
+                        participants = [...namesFromSheet];
+                        updateParticipantsList();
+                        drawWheel();
+                        
+                        if (added.length > 0 && removed.length === 0) {
+                            updateStatus(`✅ +${added.length} NEW! Total: ${participants.length} 🔄`);
+                        } else if (removed.length > 0 && added.length === 0) {
+                            updateStatus(`✅ -${removed.length} removed. Total: ${participants.length} 🔄`);
+                        } else {
+                            updateStatus(`✅ Updated! +${added.length} / -${removed.length} | Total: ${participants.length} 🔄`);
+                        }
+                        
+                        if (participants.length > 0) {
+                            enableButtons();
+                            if (!isSpinning && !idleRotationActive) {
+                                startIdleRotation();
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.log('OAuth refresh failed:', error);
+                }
+                return;
+            }
+            
+            // CSV fallback (original code)
             const url = document.getElementById('csvUrl').value.trim();
             if (!url) return;
             try {
@@ -1183,6 +1398,10 @@
         };
         
         drawWheel();
+        
+        // Initialize OAuth on page load
+        gapiLoaded();
+        gisLoaded();
     </script>
 </body>
 </html>

@@ -417,9 +417,35 @@
                 </div>
             </div>
 
+            <div class="controls">
+                <div class="control-group">
+                    <label for="timerDuration">Timer Duration:</label>
+                    <select id="timerDuration">
+                        <option value="30">30 seconds</option>
+                        <option value="60" selected>60 seconds</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="targetPosition">Number of Spins:</label>
+                    <input type="number" id="targetPosition" min="1" placeholder="e.g., 9">
+                </div>
+                <div class="button-group">
+                    <button class="btn-warning" onclick="startAutoElimination()" id="autoEliminateBtn" disabled>Start</button>
+                    <button class="btn-secondary" onclick="resetWheel()">Reset</button>
+                </div>
+            </div>
+
             <details style="margin-bottom: 15px;">
                 <summary style="font-size: 0.85em;">Google Sheets</summary>
                 <div class="controls" style="margin-top: 10px;">
+                    <!-- CSV Option (Backup/Legacy) -->
+                    <div class="control-group">
+                        <label for="csvUrl" style="font-size: 0.8em;">CSV URL (legacy):</label>
+                        <input type="text" id="csvUrl" value="https://docs.google.com/spreadsheets/d/e/2PACX-1vSBIRgxCxl7jTQgd8eejwfzUkLYgzz-5ulJbcWfr8GqDQN5ng2U7OvdwD_NOzBoq1_vlnMOdJL2THYE/pub?gid=0&single=true&output=csv" style="font-size: 0.8em;">
+                    </div>
+                    
+                    <hr style="margin: 15px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.2);">
+                    
                     <!-- OAuth Option (Recommended) -->
                     <div id="oauthSection">
                         <div id="notConnected" style="margin-bottom: 15px;">
@@ -446,34 +472,9 @@
                                 <button onclick="signOut()" class="btn-danger" style="font-size: 0.8em;">Sign Out</button>
                             </div>
                         </div>
-                        <hr style="margin: 15px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.2);">
-                    </div>
-                    
-                    <!-- CSV Option (Backup/Legacy) -->
-                    <div class="control-group">
-                        <label for="csvUrl" style="font-size: 0.8em;">CSV URL (legacy):</label>
-                        <input type="text" id="csvUrl" value="https://docs.google.com/spreadsheets/d/e/2PACX-1vSBIRgxCxl7jTQgd8eejwfzUkLYgzz-5ulJbcWfr8GqDQN5ng2U7OvdwD_NOzBoq1_vlnMOdJL2THYE/pub?gid=0&single=true&output=csv" style="font-size: 0.8em;">
                     </div>
                 </div>
             </details>
-
-            <div class="controls">
-                <div class="control-group">
-                    <label for="timerDuration">Timer Duration:</label>
-                    <select id="timerDuration">
-                        <option value="30">30 seconds</option>
-                        <option value="60" selected>60 seconds</option>
-                    </select>
-                </div>
-                <div class="control-group">
-                    <label for="targetPosition">Number of Spins:</label>
-                    <input type="number" id="targetPosition" min="1" placeholder="e.g., 9">
-                </div>
-                <div class="button-group">
-                    <button class="btn-warning" onclick="startAutoElimination()" id="autoEliminateBtn" disabled>Start</button>
-                    <button class="btn-secondary" onclick="resetWheel()">Reset</button>
-                </div>
-            </div>
 
         </div>
 
@@ -520,10 +521,10 @@
 
     <script>
         // ============================================
-        // GOOGLE OAUTH CONFIGURATION
+        // GOOGLE OAUTH CONFIGURATION WITH AUTO-REFRESH
         // ============================================
         // TODO: Replace with your OAuth Client ID from Google Cloud Console
-        const CLIENT_ID = '105290219713-5t3sur6eljik8pk80ireps8p9k8gtkj6.apps.googleusercontent.com';
+        const CLIENT_ID = 'YOUR_CLIENT_ID_HERE.apps.googleusercontent.com';
         const API_KEY = ''; // Optional
         const SCOPES = 'https://www.googleapis.com/auth/spreadsheets.readonly';
         
@@ -531,9 +532,11 @@
         let gapiInited = false;
         let gisInited = false;
         let accessToken = null;
+        let tokenExpiresAt = null; // Track when token expires
         let currentSpreadsheetId = null;
         let currentSheetRange = null;
-        let useOAuth = false; // Flag to determine if using OAuth or CSV
+        let useOAuth = false;
+        let authCheckInterval = null; // Check token expiration
         
         // Initialize Google API
         function gapiLoaded() {
@@ -564,9 +567,15 @@
                     return;
                 }
                 accessToken = resp.access_token;
+                // Tokens expire in 3600 seconds (1 hour), track 55 min to be safe
+                tokenExpiresAt = Date.now() + (55 * 60 * 1000);
+                
                 document.getElementById('notConnected').style.display = 'none';
                 document.getElementById('connected').style.display = 'block';
                 updateStatus('✅ Signed in! Enter Spreadsheet ID');
+                
+                // Start checking token expiration
+                startTokenExpirationCheck();
             };
             
             if (accessToken === null) {
@@ -576,10 +585,68 @@
             }
         }
         
+        // Check if token is expired or about to expire
+        function isTokenExpired() {
+            if (!tokenExpiresAt) return true;
+            return Date.now() >= tokenExpiresAt;
+        }
+        
+        // Auto-refresh token before it expires
+        function startTokenExpirationCheck() {
+            if (authCheckInterval) clearInterval(authCheckInterval);
+            
+            authCheckInterval = setInterval(() => {
+                if (isTokenExpired() && useOAuth) {
+                    console.log('Token expired - requesting new token');
+                    refreshToken();
+                }
+            }, 60000); // Check every minute
+        }
+        
+        // Silently refresh the token
+        function refreshToken() {
+            if (!tokenClient) return;
+            
+            tokenClient.callback = async (resp) => {
+                if (resp.error !== undefined) {
+                    console.error('Token refresh failed:', resp.error);
+                    handleTokenExpired();
+                    return;
+                }
+                accessToken = resp.access_token;
+                tokenExpiresAt = Date.now() + (55 * 60 * 1000);
+                console.log('Token refreshed successfully');
+            };
+            
+            // Request new token silently (no prompt if possible)
+            tokenClient.requestAccessToken({prompt: ''});
+        }
+        
+        // Handle expired token - notify user
+        function handleTokenExpired() {
+            stopAutoRefresh();
+            hideSyncIndicator();
+            useOAuth = false;
+            accessToken = null;
+            tokenExpiresAt = null;
+            
+            updateStatus('⚠️ SESSION EXPIRED - Click "Sign in with Google" to reconnect');
+            
+            // Show alert during stream
+            if (confirm('Your Google connection expired. Click OK to sign in again.')) {
+                handleAuthClick();
+            }
+        }
+        
         function signOut() {
             if (accessToken) {
                 google.accounts.oauth2.revoke(accessToken);
                 accessToken = null;
+                tokenExpiresAt = null;
+            }
+            if (authCheckInterval) {
+                clearInterval(authCheckInterval);
+                authCheckInterval = null;
             }
             stopAutoRefresh();
             hideSyncIndicator();
@@ -630,21 +697,36 @@
                 throw new Error('Not connected');
             }
             
-            const response = await gapi.client.sheets.spreadsheets.values.get({
-                spreadsheetId: currentSpreadsheetId,
-                range: currentSheetRange,
-            });
+            // Check if token expired before making request
+            if (isTokenExpired()) {
+                throw new Error('Token expired - please sign in again');
+            }
             
-            const rows = response.result.values;
-            if (!rows || rows.length === 0) return [];
-            
-            const names = rows
-                .slice(1)
-                .map(row => row[0])
-                .filter(name => name && name.trim().length > 0)
-                .map(name => name.trim());
-            
-            return names;
+            try {
+                const response = await gapi.client.sheets.spreadsheets.values.get({
+                    spreadsheetId: currentSpreadsheetId,
+                    range: currentSheetRange,
+                });
+                
+                const rows = response.result.values;
+                if (!rows || rows.length === 0) return [];
+                
+                const names = rows
+                    .slice(1)
+                    .map(row => row[0])
+                    .filter(name => name && name.trim().length > 0)
+                    .map(name => name.trim());
+                
+                return names;
+            } catch (error) {
+                // Handle auth errors (401, 403)
+                if (error.status === 401 || error.status === 403) {
+                    console.error('Auth error:', error);
+                    handleTokenExpired();
+                    throw new Error('Authentication expired');
+                }
+                throw error;
+            }
         }
         
         // ============================================
@@ -1178,7 +1260,13 @@
                         }
                     }
                 } catch (error) {
-                    console.log('OAuth refresh failed:', error);
+                    console.error('OAuth refresh failed:', error);
+                    // If auth error, the fetchSheetData function already called handleTokenExpired()
+                    // Just log and continue - don't spam user with errors on every refresh
+                    if (error.message.includes('Authentication expired')) {
+                        // Stop trying OAuth since token is dead
+                        return;
+                    }
                 }
                 return;
             }
@@ -1405,3 +1493,4 @@
     </script>
 </body>
 </html>
+

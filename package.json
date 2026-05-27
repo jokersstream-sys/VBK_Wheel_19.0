@@ -1,7 +1,7 @@
 {
-  "name": "giveaway-wheel",
+  "name": "jokers-giveaway-wheel",
   "version": "1.0.0",
-  "description": "Giveaway Wheel",
+  "description": "Joker's Giveaway Wheel",
   "scripts": {
     "start": "serve . -p $PORT"
   },

@@ -429,6 +429,15 @@
                     <label for="targetPosition">Number of Spins:</label>
                     <input type="number" id="targetPosition" min="1" placeholder="e.g., 9">
                 </div>
+                <div class="control-group">
+                    <label for="vbucksAmount">V-Bucks Amount:</label>
+                    <select id="vbucksAmount">
+                        <option value="400">400</option>
+                        <option value="500">500</option>
+                        <option value="800">800</option>
+                        <option value="1000">1000</option>
+                    </select>
+                </div>
                 <div class="button-group">
                     <button class="btn-warning" onclick="startAutoElimination()" id="autoEliminateBtn" disabled>Start</button>
                     <button class="btn-secondary" onclick="resetWheel()">Reset</button>
@@ -521,10 +530,45 @@
 
     <script>
         // ============================================
+        // AUDIO
+        // ============================================
+        const audioSpin = new Audio('https://pub-9f486f1fbc874ff48b83d196e5011fdd.r2.dev/Giveaway_Spin.wav');
+        audioSpin.loop = true;
+        const audioHorn = new Audio('https://pub-9f486f1fbc874ff48b83d196e5011fdd.r2.dev/Giveaway_Horn.wav');
+        const audioYes  = new Audio('https://pub-9f486f1fbc874ff48b83d196e5011fdd.r2.dev/Winner_Lets_Go_BATZ.wav');
+        const audioNo   = new Audio('https://pub-9f486f1fbc874ff48b83d196e5011fdd.r2.dev/Yeah_Nah_Next_BATZ.wav');
+
+        function stopAllAudio() {
+            [audioSpin, audioHorn, audioYes, audioNo].forEach(a => { a.pause(); a.currentTime = 0; });
+        }
+
+        // ============================================
+        // V-BUCKS / APPS SCRIPT INTEGRATION
+        // ============================================
+        async function sendWinnerToAppsScript(username) {
+            const amount = document.getElementById('vbucksAmount').value;
+            const url = `https://script.google.com/macros/s/AKfycby0o25F0N2ISGMBNf4GTq143GUCLeUCJbvG1yPoLUxHyLSHC6mLpNWUuxKH0PHFj3c1Cw/exec?command=uwin&username=${encodeURIComponent(username)}&amount=${encodeURIComponent(amount)}&moderator=G_Wheel_Bot`;
+            try {
+                await fetch(url, { method: 'GET', mode: 'no-cors' });
+                console.log(`V-Bucks sent: !uwin ${amount} ${username} (G_Wheel_Bot)`);
+            } catch(e) {
+                console.log('Apps Script call failed:', e);
+            }
+        }
+
+        function sendWinnerToStreamerbot(username) {
+            const amount = document.getElementById('vbucksAmount').value;
+            const url = `http://localhost:7474/DoAction?id=a5f2ff56-b294-4cca-bc35-921d97ba16a0&username=${encodeURIComponent(username)}&amount=${encodeURIComponent(amount)}`;
+            fetch(url, { method: 'GET', mode: 'no-cors' })
+            .then(() => console.log(`Streamer.bot triggered: ${username} ${amount} V-Bucks`))
+            .catch(e => console.log('Streamer.bot call failed:', e));
+        }
+
+        // ============================================
         // GOOGLE OAUTH CONFIGURATION WITH AUTO-REFRESH
         // ============================================
         // TODO: Replace with your OAuth Client ID from Google Cloud Console
-        const CLIENT_ID = '105290219713-5t3sur6eljik8pk80ireps8p9k8gtkj6.apps.googleusercontent.com';
+        const CLIENT_ID = '105290219713-430lcik7gp7mt1ug2m2be0av8rkleqc1.apps.googleusercontent.com';
         const API_KEY = ''; // Optional
         const SCOPES = 'https://www.googleapis.com/auth/spreadsheets.readonly';
         
@@ -750,9 +794,9 @@
         
         const winnerGifs = [
             'https://media.giphy.com/media/cbkRflpwK0epjU6esd/giphy.gif',
-            'https://media.giphy.com/media/caaa33EiI7OVHd9fhx/giphy.gif',
-            'https://media.giphy.com/media/ZVF9QTDW96lL8T0GOu/giphy.gif',
-            'https://media.giphy.com/media/cF8vpEX8ATVBAQagc8/giphy.gif'
+            'https://media.giphy.com/media/VPvutpWSViOEj4JpLk/giphy.gif',
+            'https://media.giphy.com/media/cCRUSzlvmSuzXvsi1t/giphy.gif',
+            'https://media.giphy.com/media/KoawkHN4jY1MSTN0Di/giphy.gif'
         ];
         
         const jokerImage = new Image();
@@ -977,6 +1021,8 @@
         function spin(duration = 3000) {
             if (isSpinning || participants.length === 0) return;
             stopIdleRotation();
+            stopAllAudio();
+            audioSpin.play().catch(() => {});
             isSpinning = true;
             const startTime = Date.now();
             const startRotation = currentRotation;
@@ -995,6 +1041,7 @@
                 } else {
                     isSpinning = false;
                     currentRotation = currentRotation % (Math.PI * 2);
+                    audioSpin.pause(); audioSpin.currentTime = 0;
                     onSpinComplete();
                 }
             }
@@ -1066,6 +1113,7 @@
             let timeLeft = timerDuration;
             timerEl.textContent = timeLeft;
             confirmDiv.style.display = 'block';
+            audioHorn.play().catch(() => {});
             
             if (countdownInterval) clearInterval(countdownInterval);
             
@@ -1084,15 +1132,20 @@
                 clearInterval(countdownInterval);
                 countdownInterval = null;
             }
+            audioHorn.pause(); audioHorn.currentTime = 0;
             document.getElementById('winnerConfirmation').style.display = 'none';
             
             if (isPresent) {
+                audioYes.play().catch(() => {});
+                sendWinnerToAppsScript(pendingWinner);
+                sendWinnerToStreamerbot(pendingWinner);
                 showWinnerGif(pendingWinner);
                 eliminatedParticipants.push(pendingWinner);
                 const index = participants.indexOf(pendingWinner);
                 if (index > -1) participants.splice(index, 1);
                 updateParticipantsList();
             } else {
+                audioNo.play().catch(() => {});
                 eliminatedParticipants.push(pendingWinner);
                 const index = participants.indexOf(pendingWinner);
                 if (index > -1) participants.splice(index, 1);
@@ -1107,7 +1160,7 @@
                         isReSpin = true;
                         spin();
                     }
-                }, 1000);
+                }, 3000);
             }
             pendingWinner = null;
         }
@@ -1486,11 +1539,19 @@
         };
         
         drawWheel();
-        
-        // Initialize OAuth on page load
+
+        // gapi.js is synchronous so safe to call immediately
         gapiLoaded();
-        gisLoaded();
+
+        // gsi/client loads async — poll until google.accounts is ready
+        const gisReadyCheck = setInterval(() => {
+            if (typeof google !== 'undefined' && google.accounts) {
+                clearInterval(gisReadyCheck);
+                gisLoaded();
+            }
+        }, 100);
     </script>
 </body>
 </html>
+
 
